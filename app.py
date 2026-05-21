@@ -16,7 +16,7 @@ load_dotenv()
 
 # ---------- API Keys & URLs ----------
 # !!! अपनी असली और पूरी Whatabot API Key यहाँ डालें !!!
-WHATSAPP_API_KEY = "607d4708-082d-430e-9a79"
+WHATSAPP_API_KEY = "607d4708-082d-430e-9a79-917078316119"
 WHATSAPP_PHONE = "917078316119"  # आपका Whatabot से जुड़ा नंबर
 
 SAMBA_NOVA_KEY = "e616cf01-ddbc-45e7-b4e4-0b51035c8734"
