@@ -1,3 +1,6 @@
+import gevent.monkey
+gevent.monkey.patch_all()
+
 import os
 import json
 import time
@@ -9,14 +12,12 @@ from datetime import datetime
 from flask import Flask
 from supabase import create_client, Client
 from dotenv import load_dotenv
-import gevent.monkey
-gevent.monkey.patch_all()
 
 load_dotenv()
 
 # ---------- API Keys & URLs ----------
 # !!! अपनी असली और पूरी Whatabot API Key यहाँ डालें !!!
-WHATSAPP_API_KEY = "607d4708-082d-430e-9a79-917078316119"
+WHATSAPP_API_KEY = "607d4708-082d-430e-9a79-917078316119"   # <-- पूरी UUID डालें
 WHATSAPP_PHONE = "917078316119"  # आपका Whatabot से जुड़ा नंबर
 
 SAMBA_NOVA_KEY = "e616cf01-ddbc-45e7-b4e4-0b51035c8734"
@@ -53,13 +54,11 @@ waiting_for_new_system_prompt = False
 
 # ---------- Helper Functions ----------
 def is_india_time_ok():
-    """Check if current time in IST is between 6 AM and 10 PM."""
     ist = pytz.timezone('Asia/Kolkata')
     now = datetime.now(ist)
     return 6 <= now.hour < 22
 
 def send_whatsapp(phone, message):
-    """Send a WhatsApp message via Whatabot API."""
     url = "https://api.whatabot.io/Whatsapp/RequestSendMessage"
     payload = {
         "ApiKey": WHATSAPP_API_KEY,
@@ -73,7 +72,6 @@ def send_whatsapp(phone, message):
         print(f"Failed to send WhatsApp message: {e}")
 
 def check_sambanova():
-    """Test SambaNova API connectivity."""
     url = "https://api.sambanova.ai/v1/chat/completions"
     headers = {"Authorization": f"Bearer {SAMBA_NOVA_KEY}"}
     data = {
@@ -88,10 +86,6 @@ def check_sambanova():
         return False
 
 def call_sambanova_with_tools(messages, retries=3):
-    """
-    Call SambaNova API with Tavily search tool.
-    If tool call requested, execute search and call again.
-    """
     url = "https://api.sambanova.ai/v1/chat/completions"
     headers = {
         "Authorization": f"Bearer {SAMBA_NOVA_KEY}",
@@ -158,7 +152,6 @@ def call_sambanova_with_tools(messages, retries=3):
     return "Model 3 baar fail ho gaya, code check karo."
 
 def tavily_search(query):
-    """Perform Tavily search using the official Python SDK."""
     try:
         from tavily import TavilyClient
         client = TavilyClient(api_key=TAVILY_API_KEY)
@@ -171,7 +164,6 @@ def tavily_search(query):
         return f"Search error: {e}"
 
 def load_state_from_supabase():
-    """Load all persistent data from Supabase into memory."""
     global logged_in, user_id, user_password, system_prompt, selected_model
     try:
         auth_data = supabase.table("auth").select("*").eq("id", 1).execute()
@@ -193,7 +185,6 @@ def load_state_from_supabase():
         print(f"Supabase load error: {e}")
 
 def save_auth_to_supabase():
-    """Save current auth state."""
     supabase.table("auth").upsert({
         "id": 1,
         "user_id": user_id,
@@ -202,14 +193,12 @@ def save_auth_to_supabase():
     }, on_conflict=["id"]).execute()
 
 def save_settings():
-    """Persist system prompt and selected model."""
     supabase.table("settings").upsert([
         {"key": "system_prompt", "value": system_prompt},
         {"key": "selected_model", "value": selected_model}
     ], on_conflict=["key"]).execute()
 
 def update_memory(phone, new_fact):
-    """Add a new fact to user memory stored in Supabase."""
     try:
         mem = supabase.table("memory").select("data").eq("phone", phone).execute()
         if mem.data:
@@ -222,7 +211,6 @@ def update_memory(phone, new_fact):
         print(f"Memory update error: {e}")
 
 def get_memory(phone):
-    """Retrieve user memory dict."""
     try:
         mem = supabase.table("memory").select("data").eq("phone", phone).execute()
         if mem.data:
@@ -338,7 +326,6 @@ def process_message(phone, message):
 
 # ---------- WebSocket Listener ----------
 def on_message(ws, raw_message):
-    """Whatabot से रियल-टाइम मैसेज आने पर ये फंक्शन चलेगा।"""
     try:
         data = json.loads(raw_message)
         if data.get("target") == "ReceiveMessage":
