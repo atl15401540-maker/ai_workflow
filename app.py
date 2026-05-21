@@ -1,23 +1,34 @@
-import os, json, time, requests, pytz
+import os
+import json
+import time
+import requests
+import pytz
+import threading
+import websocket
 from datetime import datetime
-from flask import Flask, request, jsonify
+from flask import Flask
 from supabase import create_client, Client
 from dotenv import load_dotenv
 
 load_dotenv()
 
-# ---------- API Keys ----------
+# ---------- API Keys & URLs ----------
+# !!! अपनी असली और पूरी Whatabot API Key यहाँ डालें !!!
 WHATSAPP_API_KEY = "607d4708-082d-430e-9a79"
+WHATSAPP_PHONE = "917078316119"  # आपका Whatabot से जुड़ा नंबर
+
 SAMBA_NOVA_KEY = "e616cf01-ddbc-45e7-b4e4-0b51035c8734"
 SUPABASE_URL = "https://yybidocfodydcjrfhwvm.supabase.co"
 SUPABASE_ANON_KEY = "sb_publishable_FbnhxATo7SXJyZc4SeUNKQ_rFPv72Cm"
-TAVILY_MCP_URL = "https://mcp.tavily.com/mcp/?tavilyApiKey=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"
+TAVILY_API_KEY = "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"
 
-# ---------- Supabase ----------
+# Supabase Client
 supabase: Client = create_client(SUPABASE_URL, SUPABASE_ANON_KEY)
+
+# ---------- Flask App ----------
 app = Flask(__name__)
 
-# ---------- In‑Memory State ----------
+# ---------- In-Memory State ----------
 logged_in = False
 user_id = None
 user_password = None
@@ -29,9 +40,13 @@ system_prompt = (
 )
 selected_model = "DeepSeek-V3.1"
 samba_available_models = [
-    "DeepSeek-V3.1","DeepSeek-V3.2",
-    "Llama-4-Maverick-17B-128E-Instruct","Meta-Llama-3.3-70B-Instruct",
-    "MiniMax-M2.7","gemma-3-12b-it","gpt-oss-120b"
+    "DeepSeek-V3.1",
+    "DeepSeek-V3.2",
+    "Llama-4-Maverick-17B-128E-Instruct",
+    "Meta-Llama-3.3-70B-Instruct",
+    "MiniMax-M2.7",
+    "gemma-3-12b-it",
+    "gpt-oss-120b"
 ]
 
 waiting_for_id = False
@@ -40,27 +55,34 @@ waiting_for_new_system_prompt = False
 
 # ---------- Helper Functions ----------
 def is_india_time_ok():
+    """Check if current time in IST is between 6 AM and 10 PM."""
     ist = pytz.timezone('Asia/Kolkata')
     now = datetime.now(ist)
     return 6 <= now.hour < 22
 
 def send_whatsapp(phone, message):
-    url = "https://whatabot.io/api/send_message"
-    params = {
-        "apikey": WHATSAPP_API_KEY,
-        "phone": 917078316119,
-        "message": message
+    """Send a WhatsApp message via Whatabot API."""
+    url = "https://api.whatabot.io/Whatsapp/RequestSendMessage"
+    payload = {
+        "ApiKey": WHATSAPP_API_KEY,
+        "Text": message,
+        "Phone": phone
     }
     try:
-        r = requests.post(url, json=params, timeout=10)
-        print(f"WhatsApp send: {r.status_code} {r.text}")
+        r = requests.post(url, json=payload, timeout=10)
+        print(f"WhatsApp send response: {r.status_code} {r.text}")
     except Exception as e:
-        print(f"WhatsApp send error: {e}")
+        print(f"Failed to send WhatsApp message: {e}")
 
 def check_sambanova():
+    """Test SambaNova API connectivity."""
     url = "https://api.sambanova.ai/v1/chat/completions"
     headers = {"Authorization": f"Bearer {SAMBA_NOVA_KEY}"}
-    data = {"model": selected_model, "messages": [{"role": "user", "content": "ping"}], "max_tokens": 1}
+    data = {
+        "model": selected_model,
+        "messages": [{"role": "user", "content": "ping"}],
+        "max_tokens": 1
+    }
     try:
         r = requests.post(url, headers=headers, json=data, timeout=15)
         return r.status_code == 200
@@ -68,6 +90,10 @@ def check_sambanova():
         return False
 
 def call_sambanova_with_tools(messages, retries=3):
+    """
+    Call SambaNova API with Tavily search tool.
+    If tool call requested, execute search and call again.
+    """
     url = "https://api.sambanova.ai/v1/chat/completions"
     headers = {
         "Authorization": f"Bearer {SAMBA_NOVA_KEY}",
@@ -128,38 +154,37 @@ def call_sambanova_with_tools(messages, retries=3):
             else:
                 time.sleep(2)
         except Exception as e:
-            if attempt == retries - 1:
+            if attempt == retries-1:
                 return f"Network jam ya API connect nahi hua: {str(e)}"
             time.sleep(2)
     return "Model 3 baar fail ho gaya, code check karo."
 
 def tavily_search(query):
+    """Perform Tavily search using the official Python SDK."""
     try:
-        r = requests.post(
-            TAVILY_MCP_URL,
-            json={"query": query, "max_results": 3},
-            headers={"Content-Type": "application/json"},
-            timeout=15
-        )
-        if r.status_code == 200:
-            data = r.json()
-            results = []
-            for item in data.get("results", [])[:3]:
-                results.append(f"{item.get('title','')}: {item.get('content','')[:300]}")
-            return "\n".join(results) if results else "Kuch nahi mila."
-        return "Search fail ho gayi."
+        # Tavily Python SDK का सही इस्तेमाल
+        from tavily import TavilyClient
+        client = TavilyClient(api_key=TAVILY_API_KEY)
+        response = client.search(query, max_results=3)
+        results = []
+        for item in response.get("results", [])[:3]:
+            results.append(f"{item.get('title','')}: {item.get('content','')[:300]}")
+        return "\n".join(results) if results else "Kuch nahi mila."
     except Exception as e:
         return f"Search error: {e}"
 
 def load_state_from_supabase():
+    """Load all persistent data from Supabase into memory."""
     global logged_in, user_id, user_password, system_prompt, selected_model
     try:
+        # Auth
         auth_data = supabase.table("auth").select("*").eq("id", 1).execute()
         if auth_data.data:
             row = auth_data.data[0]
             user_id = row.get("user_id")
             user_password = row.get("password")
             logged_in = row.get("logged_in", False)
+        # Settings
         settings = supabase.table("settings").select("*").execute()
         for row in settings.data:
             key = row["key"]
@@ -173,20 +198,23 @@ def load_state_from_supabase():
         print(f"Supabase load error: {e}")
 
 def save_auth_to_supabase():
+    """Save current auth state."""
     supabase.table("auth").upsert({
         "id": 1,
         "user_id": user_id,
         "password": user_password,
         "logged_in": logged_in
-    }).execute()
+    }, on_conflict=["id"]).execute()
 
 def save_settings():
+    """Persist system prompt and selected model."""
     supabase.table("settings").upsert([
         {"key": "system_prompt", "value": system_prompt},
         {"key": "selected_model", "value": selected_model}
-    ]).execute()
+    ], on_conflict=["key"]).execute()
 
 def update_memory(phone, new_fact):
+    """Add a new fact to user memory stored in Supabase."""
     try:
         mem = supabase.table("memory").select("data").eq("phone", phone).execute()
         if mem.data:
@@ -194,11 +222,12 @@ def update_memory(phone, new_fact):
         else:
             current = {}
         current.update(new_fact)
-        supabase.table("memory").upsert({"phone": phone, "data": current}).execute()
+        supabase.table("memory").upsert({"phone": phone, "data": current}, on_conflict=["phone"]).execute()
     except Exception as e:
         print(f"Memory update error: {e}")
 
 def get_memory(phone):
+    """Retrieve user memory dict."""
     try:
         mem = supabase.table("memory").select("data").eq("phone", phone).execute()
         if mem.data:
@@ -207,34 +236,31 @@ def get_memory(phone):
     except:
         return {}
 
-# ---------- Webhook Endpoint ----------
-@app.route('/webhook', methods=['POST'])
-def webhook():
-    global logged_in, waiting_for_id, waiting_for_password, waiting_for_new_system_prompt
-    data = request.json
-    phone = data.get("phone", "")
-    message = data.get("message", "").strip()
+# ---------- Message Processor ----------
+def process_message(phone, message):
+    global logged_in, waiting_for_id, waiting_for_password, waiting_for_new_system_prompt, user_id, user_password, system_prompt, selected_model
 
+    # Time restriction
     if not is_india_time_ok():
         send_whatsapp(phone, "Bot sirf subah 6 se raat 10 baje tak available hai. 🙏")
-        return jsonify({"status": "time restricted"}), 200
+        return
 
-    # ---- AUTHENTICATION ----
+    # ---- AUTHENTICATION FLOW ----
     if not logged_in and not waiting_for_id and not waiting_for_password:
         if message.lower() == "i_am_user":
             waiting_for_id = True
             send_whatsapp(phone, "Pehle apni ID bhejo:")
-            return jsonify({"status": "waiting for id"}), 200
+            return
         else:
             send_whatsapp(phone, "Authentication error. Login ke liye 'i_am_user' bhejo.")
-            return jsonify({"status": "unauthorized"}), 200
+            return
 
     if waiting_for_id:
         user_id = message
         waiting_for_id = False
         waiting_for_password = True
         send_whatsapp(phone, "Ab apna password bhejo:")
-        return jsonify({"status": "waiting for password"}), 200
+        return
 
     if waiting_for_password:
         password = message
@@ -243,44 +269,43 @@ def webhook():
             waiting_for_password = False
             save_auth_to_supabase()
             send_whatsapp(phone, "Login successful! Ab aap chat kar sakte hain. 😊")
-            return jsonify({"status": "logged in"}), 200
+            return
         else:
             waiting_for_password = False
             send_whatsapp(phone, "ID ya password galat hai. Phir se 'i_am_user' bhejkar try karo.")
-            return jsonify({"status": "auth failed"}), 200
+            return
 
     # ---- LOGGED IN COMMANDS ----
     if message.lower() == "logout":
         logged_in = False
         save_auth_to_supabase()
         send_whatsapp(phone, "User logout ho gaya. Dubara login ke liye 'i_am_user' bhejo.")
-        return jsonify({"status": "logged out"}), 200
+        return
 
     if message.lower() == "sambanova_model_select":
         model_list = "\n".join([f"{i+1}. {m}" for i, m in enumerate(samba_available_models)])
         send_whatsapp(phone, f"Available models:\n{model_list}\nKoi model select karne ke liye bas naam bhejo.")
-        return jsonify({"status": "model list sent"}), 200
+        return
 
     if message in samba_available_models:
-        global selected_model
         selected_model = message
         save_settings()
         send_whatsapp(phone, f"Model set to: {selected_model}")
-        return jsonify({"status": "model changed"}), 200
+        return
 
     if message.lower() == "llm_change_system":
         waiting_for_new_system_prompt = True
         send_whatsapp(phone, "You can now change system prompt. Agla message system prompt ban jaayega.")
-        return jsonify({"status": "awaiting system prompt"}), 200
+        return
 
     if waiting_for_new_system_prompt:
         system_prompt = message
         waiting_for_new_system_prompt = False
         save_settings()
-        send_whatsapp(phone, "System prompt updated!")
-        return jsonify({"status": "system prompt changed"}), 200
+        send_whatsapp(phone, f"System prompt updated!")
+        return
 
-    # ---- NORMAL CHAT ----
+    # ---- NORMAL CHAT WITH LLM + SEARCH ----
     user_mem = get_memory(phone)
     mem_text = "\n".join([f"{k}: {v}" for k, v in user_mem.items()])
     system_content = system_prompt + f"\n\nUser info:\n{mem_text}" if mem_text else system_prompt
@@ -305,36 +330,72 @@ def webhook():
     ]).execute()
 
     # Memory update
-    fact_extraction_prompt = (
-        f"User said: {message}\nAssistant replied: {reply}\n"
-        "Update the user memory JSON with any new facts about the user (name, preferences, job, etc.) "
-        "but keep old facts. Return only the merged JSON."
-    )
-    mem_msgs = [
-        {"role": "system", "content": "You are a memory updater."},
-        {"role": "user", "content": fact_extraction_prompt}
-    ]
+    fact_extraction_prompt = f"User said: {message}\nAssistant replied: {reply}\nUpdate the user memory JSON with any new facts about the user (like name, preferences, job, etc.) but keep old facts. Return only the merged JSON."
+    mem_msgs = [{"role": "system", "content": "You are a memory updater."}, {"role": "user", "content": fact_extraction_prompt}]
     new_facts = call_sambanova_with_tools(mem_msgs, retries=1)
     try:
         updated_mem = json.loads(new_facts)
         if isinstance(updated_mem, dict):
-            supabase.table("memory").upsert({"phone": phone, "data": updated_mem}).execute()
+            supabase.table("memory").upsert({"phone": phone, "data": updated_mem}, on_conflict=["phone"]).execute()
     except:
         pass
 
     send_whatsapp(phone, reply)
-    return jsonify({"status": "replied"}), 200
 
-# ---------- Home ----------
+# ---------- WebSocket Listener ----------
+def on_message(ws, raw_message):
+    """Whatabot से रियल-टाइम मैसेज आने पर ये फंक्शन चलेगा।"""
+    try:
+        data = json.loads(raw_message)
+        if data.get("target") == "ReceiveMessage":
+            args = data.get("arguments", [])
+            if args:
+                user_text = args[0]
+                process_message(WHATSAPP_PHONE, user_text)
+    except Exception as e:
+        print("WSS message error:", e)
+
+def on_error(ws, error):
+    print("WSS error:", error)
+
+def on_close(ws, close_status_code, close_msg):
+    print("WSS connection closed. Reconnecting in 10 sec...")
+    time.sleep(10)
+    start_ws()
+
+def on_open(ws):
+    print("WSS connected!")
+    # कनेक्शन स्थापित करने के लिए पहला मैसेज भेजना ज़रूरी है
+    ws.send('{"protocol":"json","version":1}\x1e')
+
+def start_ws():
+    ws_url = "wss://api.whatabot.io/Whatsapp/RealtimeMessages"
+    headers = {
+        "x-api-key": WHATSAPP_API_KEY,
+        "x-platform": "whatsapp",
+        "x-chat-id": WHATSAPP_PHONE
+    }
+    ws = websocket.WebSocketApp(ws_url,
+                                header=headers,
+                                on_open=on_open,
+                                on_message=on_message,
+                                on_error=on_error,
+                                on_close=on_close)
+    wst = threading.Thread(target=ws.run_forever)
+    wst.daemon = True
+    wst.start()
+
+# ---------- Flask Routes ----------
 @app.route('/')
 def home():
     return "WhatsApp AI Bot is running!"
 
-# ---------- Startup ----------
+# ---------- Main ----------
 if __name__ == '__main__':
     if check_sambanova():
         print("SambaNova API connected successfully.")
-    else:
-        print("Warning: SambaNova API not reachable.")
     load_state_from_supabase()
-    app.run(host='0.0.0.0', port=10000)
+    start_ws()
+    # Gunicorn के लिए पोर्ट को एनवायरनमेंट वेरिएबल से बाइंड करना सबसे अच्छा है
+    port = int(os.environ.get('PORT', 10000))
+    app.run(host='0.0.0.0', port=port)
