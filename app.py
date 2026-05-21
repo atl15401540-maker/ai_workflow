@@ -7,7 +7,7 @@ from dotenv import load_dotenv
 load_dotenv()
 
 # ---------- API Keys ----------
-WHATSAPP_API_KEY = "bcb2c320-0344-4192-88df"
+WHATSAPP_API_KEY = "607d4708-082d-430e-9a79"
 SAMBA_NOVA_KEY = "e616cf01-ddbc-45e7-b4e4-0b51035c8734"
 SUPABASE_URL = "https://yybidocfodydcjrfhwvm.supabase.co"
 SUPABASE_ANON_KEY = "sb_publishable_FbnhxATo7SXJyZc4SeUNKQ_rFPv72Cm"
@@ -48,7 +48,7 @@ def send_whatsapp(phone, message):
     url = "https://whatabot.io/api/send_message"
     params = {
         "apikey": WHATSAPP_API_KEY,
-        "phone": phone,
+        "phone": 917078316119,
         "message": message
     }
     try:
