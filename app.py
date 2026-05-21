@@ -1,18 +1,12 @@
-import os
-import json
-import time
-import requests
-import pytz
-import threading
-import websocket
+import os, json, time, requests, pytz
 from datetime import datetime
-from flask import Flask
+from flask import Flask, request, jsonify
 from supabase import create_client, Client
 from dotenv import load_dotenv
 
 load_dotenv()
 
-# ---------- API Keys & URLs ----------
+# ---------- API Keys ----------
 WHATSAPP_API_KEY = "bcb2c320-0344-4192-88df"
 SAMBA_NOVA_KEY = "e616cf01-ddbc-45e7-b4e4-0b51035c8734"
 SUPABASE_URL = "https://yybidocfodydcjrfhwvm.supabase.co"
@@ -21,11 +15,9 @@ TAVILY_MCP_URL = "https://mcp.tavily.com/mcp/?tavilyApiKey=tvly-dev-1EUuEd-lb3e1
 
 # ---------- Supabase ----------
 supabase: Client = create_client(SUPABASE_URL, SUPABASE_ANON_KEY)
-
-# ---------- Flask ----------
 app = Flask(__name__)
 
-# ---------- In-Memory State ----------
+# ---------- In‑Memory State ----------
 logged_in = False
 user_id = None
 user_password = None
@@ -37,9 +29,9 @@ system_prompt = (
 )
 selected_model = "DeepSeek-V3.1"
 samba_available_models = [
-    "DeepSeek-V3.1", "DeepSeek-V3.2",
-    "Llama-4-Maverick-17B-128E-Instruct", "Meta-Llama-3.3-70B-Instruct",
-    "MiniMax-M2.7", "gemma-3-12b-it", "gpt-oss-120b"
+    "DeepSeek-V3.1","DeepSeek-V3.2",
+    "Llama-4-Maverick-17B-128E-Instruct","Meta-Llama-3.3-70B-Instruct",
+    "MiniMax-M2.7","gemma-3-12b-it","gpt-oss-120b"
 ]
 
 waiting_for_id = False
@@ -53,7 +45,6 @@ def is_india_time_ok():
     return 6 <= now.hour < 22
 
 def send_whatsapp(phone, message):
-    """Send a WhatsApp message via Whatabot API."""
     url = "https://whatabot.io/api/send_message"
     params = {
         "apikey": WHATSAPP_API_KEY,
@@ -62,18 +53,14 @@ def send_whatsapp(phone, message):
     }
     try:
         r = requests.post(url, json=params, timeout=10)
-        print(f"WhatsApp send response: {r.status_code} {r.text}")
+        print(f"WhatsApp send: {r.status_code} {r.text}")
     except Exception as e:
-        print(f"Failed to send WhatsApp message: {e}")
+        print(f"WhatsApp send error: {e}")
 
 def check_sambanova():
     url = "https://api.sambanova.ai/v1/chat/completions"
     headers = {"Authorization": f"Bearer {SAMBA_NOVA_KEY}"}
-    data = {
-        "model": selected_model,
-        "messages": [{"role": "user", "content": "ping"}],
-        "max_tokens": 1
-    }
+    data = {"model": selected_model, "messages": [{"role": "user", "content": "ping"}], "max_tokens": 1}
     try:
         r = requests.post(url, headers=headers, json=data, timeout=15)
         return r.status_code == 200
@@ -220,31 +207,34 @@ def get_memory(phone):
     except:
         return {}
 
-# ---------- Message Processor (Webhook logic moved here) ----------
-def process_message(phone, message):
-    global logged_in, user_id, user_password, system_prompt, selected_model
-    global waiting_for_id, waiting_for_password, waiting_for_new_system_prompt
+# ---------- Webhook Endpoint ----------
+@app.route('/webhook', methods=['POST'])
+def webhook():
+    global logged_in, waiting_for_id, waiting_for_password, waiting_for_new_system_prompt
+    data = request.json
+    phone = data.get("phone", "")
+    message = data.get("message", "").strip()
 
     if not is_india_time_ok():
         send_whatsapp(phone, "Bot sirf subah 6 se raat 10 baje tak available hai. 🙏")
-        return
+        return jsonify({"status": "time restricted"}), 200
 
-    # ---- AUTHENTICATION FLOW ----
+    # ---- AUTHENTICATION ----
     if not logged_in and not waiting_for_id and not waiting_for_password:
         if message.lower() == "i_am_user":
             waiting_for_id = True
             send_whatsapp(phone, "Pehle apni ID bhejo:")
-            return
+            return jsonify({"status": "waiting for id"}), 200
         else:
             send_whatsapp(phone, "Authentication error. Login ke liye 'i_am_user' bhejo.")
-            return
+            return jsonify({"status": "unauthorized"}), 200
 
     if waiting_for_id:
         user_id = message
         waiting_for_id = False
         waiting_for_password = True
         send_whatsapp(phone, "Ab apna password bhejo:")
-        return
+        return jsonify({"status": "waiting for password"}), 200
 
     if waiting_for_password:
         password = message
@@ -253,43 +243,44 @@ def process_message(phone, message):
             waiting_for_password = False
             save_auth_to_supabase()
             send_whatsapp(phone, "Login successful! Ab aap chat kar sakte hain. 😊")
-            return
+            return jsonify({"status": "logged in"}), 200
         else:
             waiting_for_password = False
             send_whatsapp(phone, "ID ya password galat hai. Phir se 'i_am_user' bhejkar try karo.")
-            return
+            return jsonify({"status": "auth failed"}), 200
 
     # ---- LOGGED IN COMMANDS ----
     if message.lower() == "logout":
         logged_in = False
         save_auth_to_supabase()
         send_whatsapp(phone, "User logout ho gaya. Dubara login ke liye 'i_am_user' bhejo.")
-        return
+        return jsonify({"status": "logged out"}), 200
 
     if message.lower() == "sambanova_model_select":
         model_list = "\n".join([f"{i+1}. {m}" for i, m in enumerate(samba_available_models)])
         send_whatsapp(phone, f"Available models:\n{model_list}\nKoi model select karne ke liye bas naam bhejo.")
-        return
+        return jsonify({"status": "model list sent"}), 200
 
     if message in samba_available_models:
+        global selected_model
         selected_model = message
         save_settings()
         send_whatsapp(phone, f"Model set to: {selected_model}")
-        return
+        return jsonify({"status": "model changed"}), 200
 
     if message.lower() == "llm_change_system":
         waiting_for_new_system_prompt = True
         send_whatsapp(phone, "You can now change system prompt. Agla message system prompt ban jaayega.")
-        return
+        return jsonify({"status": "awaiting system prompt"}), 200
 
     if waiting_for_new_system_prompt:
         system_prompt = message
         waiting_for_new_system_prompt = False
         save_settings()
         send_whatsapp(phone, "System prompt updated!")
-        return
+        return jsonify({"status": "system prompt changed"}), 200
 
-    # ---- NORMAL CHAT WITH LLM + SEARCH ----
+    # ---- NORMAL CHAT ----
     user_mem = get_memory(phone)
     mem_text = "\n".join([f"{k}: {v}" for k, v in user_mem.items()])
     system_content = system_prompt + f"\n\nUser info:\n{mem_text}" if mem_text else system_prompt
@@ -316,7 +307,7 @@ def process_message(phone, message):
     # Memory update
     fact_extraction_prompt = (
         f"User said: {message}\nAssistant replied: {reply}\n"
-        "Update the user memory JSON with any new facts about the user (like name, preferences, job, etc.) "
+        "Update the user memory JSON with any new facts about the user (name, preferences, job, etc.) "
         "but keep old facts. Return only the merged JSON."
     )
     mem_msgs = [
@@ -332,66 +323,18 @@ def process_message(phone, message):
         pass
 
     send_whatsapp(phone, reply)
+    return jsonify({"status": "replied"}), 200
 
-# ---------- WebSocket Listener ----------
-def on_message(ws, raw_message):
-    try:
-        data = json.loads(raw_message)
-        if data.get("target") == "ReceiveMessage":
-            args = data.get("arguments", [])
-            if args:
-                user_text = args[0]
-                phone = "916395509518"  # आपका व्हाट्सएप नंबर
-                process_message(phone, user_text)
-    except Exception as e:
-        print("WSS message error:", e)
-
-def on_error(ws, error):
-    print("WSS error:", error)
-
-def on_close(ws, close_status_code, close_msg):
-    print("WSS connection closed. Reconnecting in 10 sec...")
-    time.sleep(10)
-    start_ws()
-
-def on_open(ws):
-    print("WSS connected!")
-    ws.send('{"protocol":"json","version":1}\x1e')
-
-def start_ws():
-    ws_url = "wss://api.whatabot.io/Whatsapp/RealtimeMessages"
-    headers = {
-        "x-api-key": WHATSAPP_API_KEY,
-        "x-platform": "whatsapp",
-        "x-chat-id": "916395509518"
-    }
-    ws = websocket.WebSocketApp(ws_url,
-                                header=headers,
-                                on_open=on_open,
-                                on_message=on_message,
-                                on_error=on_error,
-                                on_close=on_close)
-    wst = threading.Thread(target=ws.run_forever)
-    wst.daemon = True
-    wst.start()
-
-# ---------- Flask Routes ----------
+# ---------- Home ----------
 @app.route('/')
 def home():
     return "WhatsApp AI Bot is running!"
 
-# ---------- API Keys, Supabase, Flask, Functions (पूरा पहले जैसा) ----------
-# ... (आपका सारा पिछला कोड, जिसमें सभी functions डिफाइन हैं) ...
-
-# ---------- STARTUP: Module Load पर ही WebSocket वगैरह शुरू करो ----------
-if check_sambanova():
-    print("SambaNova API connected successfully.")
-else:
-    print("Warning: SambaNova API not reachable.")
-
-load_state_from_supabase()
-start_ws()   # ये WebSocket connection शुरू करेगा
-
-# ---------- Local testing के लिए (gunicorn इसे ignore करेगा) ----------
+# ---------- Startup ----------
 if __name__ == '__main__':
+    if check_sambanova():
+        print("SambaNova API connected successfully.")
+    else:
+        print("Warning: SambaNova API not reachable.")
+    load_state_from_supabase()
     app.run(host='0.0.0.0', port=10000)
