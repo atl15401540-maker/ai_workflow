@@ -9,6 +9,8 @@ from datetime import datetime
 from flask import Flask
 from supabase import create_client, Client
 from dotenv import load_dotenv
+import gevent.monkey
+gevent.monkey.patch_all()
 
 load_dotenv()
 
@@ -40,13 +42,9 @@ system_prompt = (
 )
 selected_model = "DeepSeek-V3.1"
 samba_available_models = [
-    "DeepSeek-V3.1",
-    "DeepSeek-V3.2",
-    "Llama-4-Maverick-17B-128E-Instruct",
-    "Meta-Llama-3.3-70B-Instruct",
-    "MiniMax-M2.7",
-    "gemma-3-12b-it",
-    "gpt-oss-120b"
+    "DeepSeek-V3.1", "DeepSeek-V3.2",
+    "Llama-4-Maverick-17B-128E-Instruct", "Meta-Llama-3.3-70B-Instruct",
+    "MiniMax-M2.7", "gemma-3-12b-it", "gpt-oss-120b"
 ]
 
 waiting_for_id = False
@@ -162,7 +160,6 @@ def call_sambanova_with_tools(messages, retries=3):
 def tavily_search(query):
     """Perform Tavily search using the official Python SDK."""
     try:
-        # Tavily Python SDK का सही इस्तेमाल
         from tavily import TavilyClient
         client = TavilyClient(api_key=TAVILY_API_KEY)
         response = client.search(query, max_results=3)
@@ -177,14 +174,12 @@ def load_state_from_supabase():
     """Load all persistent data from Supabase into memory."""
     global logged_in, user_id, user_password, system_prompt, selected_model
     try:
-        # Auth
         auth_data = supabase.table("auth").select("*").eq("id", 1).execute()
         if auth_data.data:
             row = auth_data.data[0]
             user_id = row.get("user_id")
             user_password = row.get("password")
             logged_in = row.get("logged_in", False)
-        # Settings
         settings = supabase.table("settings").select("*").execute()
         for row in settings.data:
             key = row["key"]
@@ -240,7 +235,6 @@ def get_memory(phone):
 def process_message(phone, message):
     global logged_in, waiting_for_id, waiting_for_password, waiting_for_new_system_prompt, user_id, user_password, system_prompt, selected_model
 
-    # Time restriction
     if not is_india_time_ok():
         send_whatsapp(phone, "Bot sirf subah 6 se raat 10 baje tak available hai. 🙏")
         return
@@ -365,7 +359,6 @@ def on_close(ws, close_status_code, close_msg):
 
 def on_open(ws):
     print("WSS connected!")
-    # कनेक्शन स्थापित करने के लिए पहला मैसेज भेजना ज़रूरी है
     ws.send('{"protocol":"json","version":1}\x1e')
 
 def start_ws():
@@ -396,6 +389,11 @@ if __name__ == '__main__':
         print("SambaNova API connected successfully.")
     load_state_from_supabase()
     start_ws()
-    # Gunicorn के लिए पोर्ट को एनवायरनमेंट वेरिएबल से बाइंड करना सबसे अच्छा है
     port = int(os.environ.get('PORT', 10000))
     app.run(host='0.0.0.0', port=port)
+else:
+    # Production (Gunicorn) के लिए
+    if check_sambanova():
+        print("SambaNova API connected successfully.")
+    load_state_from_supabase()
+    start_ws()
