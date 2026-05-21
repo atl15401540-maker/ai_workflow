@@ -4,3 +4,4 @@ supabase
 python-dotenv
 pytz
 gunicorn
+websocket-client
