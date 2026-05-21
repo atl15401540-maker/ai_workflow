@@ -380,12 +380,18 @@ def start_ws():
 def home():
     return "WhatsApp AI Bot is running!"
 
-# ---------- Main ----------
+# ---------- API Keys, Supabase, Flask, Functions (पूरा पहले जैसा) ----------
+# ... (आपका सारा पिछला कोड, जिसमें सभी functions डिफाइन हैं) ...
+
+# ---------- STARTUP: Module Load पर ही WebSocket वगैरह शुरू करो ----------
+if check_sambanova():
+    print("SambaNova API connected successfully.")
+else:
+    print("Warning: SambaNova API not reachable.")
+
+load_state_from_supabase()
+start_ws()   # ये WebSocket connection शुरू करेगा
+
+# ---------- Local testing के लिए (gunicorn इसे ignore करेगा) ----------
 if __name__ == '__main__':
-    if check_sambanova():
-        print("SambaNova API connected successfully.")
-    else:
-        print("Warning: SambaNova API not reachable.")
-    load_state_from_supabase()
-    start_ws()
     app.run(host='0.0.0.0', port=10000)
