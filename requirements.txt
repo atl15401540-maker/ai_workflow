@@ -4,5 +4,6 @@ supabase
 python-dotenv
 pytz
 gunicorn
+gevent
 websocket-client
 tavily-python
